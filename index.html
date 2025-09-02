@@ -1,0 +1,514 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+// =============================
+// Middle School Grade Tracker
+// =============================
+// Funzioni principali:
+// - Seleziona materie (lista completa + personalizzate)
+// - Inserisci voti 1° e 2° quadrimestre, calcola media (con colori: <6 rosso, >=6 verde)
+// - Inserisci note (disciplinari o didattiche) con data e testo
+// - Domande iniziali sul comportamento (es. "Fai casino?") che incidono sulla condotta
+// - Imposta a piacere la penalità per ogni nota disciplinare
+// - Calcola e mostra voto di condotta aggiornato
+// - Salvataggio automatico su localStorage
+
+const ALL_SUBJECTS = [
+  "Italiano",
+  "Storia",
+  "Geografia",
+  "Matematica",
+  "Scienze",
+  "Inglese",
+  "Seconda lingua (Francese)",
+  "Seconda lingua (Spagnolo)",
+  "Seconda lingua (Tedesco)",
+  "Arte e Immagine",
+  "Musica",
+  "Tecnologia",
+  "Scienze Motorie",
+  "Religione Cattolica",
+  "Alternativa all'IRC",
+];
+
+const DEFAULT_QUESTIONS = [
+  { id: "casino", label: "Fai casino in classe?" },
+  { id: "ritardi", label: "Arrivi spesso in ritardo?" },
+  { id: "materiale", label: "Dimentichi il materiale?" },
+  { id: "rispetto", label: "Mancanze di rispetto?" },
+];
+
+function clamp(n, min, max) {
+  return Math.min(max, Math.max(min, n));
+}
+
+function average(values) {
+  const nums = values.map((v) => (isFinite(v) ? v : null)).filter((v) => v !== null);
+  if (nums.length === 0) return null;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+function colorForGrade(g) {
+  if (g == null) return "text-gray-400";
+  return g < 6 ? "text-red-600" : "text-emerald-600";
+}
+
+function Section({ title, right, children }) {
+  return (
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border p-5">
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <h2 className="text-xl font-semibold">{title}</h2>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export default function MiddleSchoolGradeTracker() {
+  const [step, setStep] = useState(0); // 0 = setup, 1 = dashboard
+
+  const [availableSubjects, setAvailableSubjects] = useState(ALL_SUBJECTS);
+  const [selectedSubjects, setSelectedSubjects] = useState([]);
+  const [customSubject, setCustomSubject] = useState("");
+
+  const [questionAnswers, setQuestionAnswers] = useState(
+    Object.fromEntries(DEFAULT_QUESTIONS.map((q) => [q.id, false]))
+  );
+  const [perQuestionPenalty, setPerQuestionPenalty] = useState(0.25); // ogni "Sì" toglie questo dalla condotta
+  const [notePenalty, setNotePenalty] = useState(0.25); // penalità per nota disciplinare (configurabile)
+
+  // voti: { [materia]: { q1: number|null, q2: number|null } }
+  const [grades, setGrades] = useState({});
+
+  // note: { id, date, type: 'disciplinare'|'didattica', text }
+  const [notes, setNotes] = useState([]);
+  const [newNoteText, setNewNoteText] = useState("");
+  const [newNoteType, setNewNoteType] = useState("disciplinare");
+
+  // ===== Persistence =====
+  useEffect(() => {
+    const saved = localStorage.getItem("msgt_state_v1");
+    if (saved) {
+      try {
+        const obj = JSON.parse(saved);
+        setStep(obj.step ?? 0);
+        setAvailableSubjects(obj.availableSubjects ?? ALL_SUBJECTS);
+        setSelectedSubjects(obj.selectedSubjects ?? []);
+        setCustomSubject("");
+        setQuestionAnswers(
+          obj.questionAnswers ?? Object.fromEntries(DEFAULT_QUESTIONS.map((q) => [q.id, false]))
+        );
+        setPerQuestionPenalty(obj.perQuestionPenalty ?? 0.25);
+        setNotePenalty(obj.notePenalty ?? 0.25);
+        setGrades(obj.grades ?? {});
+        setNotes(obj.notes ?? []);
+      } catch (e) {
+        console.warn("State restore failed", e);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const state = {
+      step,
+      availableSubjects,
+      selectedSubjects,
+      questionAnswers,
+      perQuestionPenalty,
+      notePenalty,
+      grades,
+      notes,
+    };
+    localStorage.setItem("msgt_state_v1", JSON.stringify(state));
+  }, [
+    step,
+    availableSubjects,
+    selectedSubjects,
+    questionAnswers,
+    perQuestionPenalty,
+    notePenalty,
+    grades,
+    notes,
+  ]);
+
+  // ===== Derived =====
+  const questionYesCount = useMemo(
+    () => Object.values(questionAnswers).filter(Boolean).length,
+    [questionAnswers]
+  );
+
+  const disciplinaryNotes = useMemo(
+    () => notes.filter((n) => n.type === "disciplinare").length,
+    [notes]
+  );
+
+  const conduct = useMemo(() => {
+    const base = 10;
+    const qPenalty = questionYesCount * perQuestionPenalty;
+    const nPenalty = disciplinaryNotes * notePenalty;
+    return clamp(Number((base - qPenalty - nPenalty).toFixed(2)), 1, 10);
+  }, [questionYesCount, perQuestionPenalty, disciplinaryNotes, notePenalty]);
+
+  const overallAverage = useMemo(() => {
+    const avgs = selectedSubjects
+      .map((s) => {
+        const g = grades[s] || {};
+        const v = average([Number(g.q1), Number(g.q2)].filter((x) => !isNaN(x)));
+        return v;
+      })
+      .filter((v) => v != null);
+    return avgs.length ? Number(average(avgs).toFixed(2)) : null;
+  }, [selectedSubjects, grades]);
+
+  // ===== Handlers =====
+  function toggleSubject(subj) {
+    setSelectedSubjects((prev) =>
+      prev.includes(subj) ? prev.filter((s) => s !== subj) : [...prev, subj]
+    );
+  }
+
+  function addCustomSubject() {
+    const s = customSubject.trim();
+    if (!s) return;
+    if (!availableSubjects.includes(s)) {
+      setAvailableSubjects((prev) => [...prev, s]);
+    }
+    if (!selectedSubjects.includes(s)) {
+      setSelectedSubjects((prev) => [...prev, s]);
+    }
+    setCustomSubject("");
+  }
+
+  function updateGrade(subj, key, value) {
+    const num = value === "" ? "" : Number(value);
+    if (num === "" || (isFinite(num) && num >= 1 && num <= 10)) {
+      setGrades((prev) => ({
+        ...prev,
+        [subj]: { ...(prev[subj] || {}), [key]: num === "" ? null : num },
+      }));
+    }
+  }
+
+  function addNote() {
+    const text = newNoteText.trim();
+    if (!text) return;
+    setNotes((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        date: new Date().toISOString().slice(0, 10),
+        type: newNoteType,
+        text,
+      },
+    ]);
+    setNewNoteText("");
+  }
+
+  function deleteNote(id) {
+    setNotes((prev) => prev.filter((n) => n.id !== id));
+  }
+
+  function resetAll() {
+    if (!confirm("Sei sicuro di voler azzerare tutto?")) return;
+    localStorage.removeItem("msgt_state_v1");
+    window.location.reload();
+  }
+
+  // ===== UI =====
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 text-slate-900 p-6">
+      <div className="max-w-6xl mx-auto grid gap-6">
+        <header className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold tracking-tight">Registro Voti – Medie</h1>
+          <div className="flex gap-2">
+            <button
+              className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50"
+              onClick={() => setStep(0)}
+              title="Setup"
+            >
+              Setup
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50"
+              onClick={() => setStep(1)}
+              title="Vai alla dashboard"
+            >
+              Dashboard
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border bg-white hover:bg-red-50"
+              onClick={resetAll}
+              title="Azzera tutto"
+            >
+              Reset
+            </button>
+          </div>
+        </header>
+
+        {step === 0 && (
+          <div className="grid lg:grid-cols-2 gap-6">
+            <Section title="Scegli le tue materie">
+              <div className="mb-4 flex gap-2">
+                <input
+                  value={customSubject}
+                  onChange={(e) => setCustomSubject(e.target.value)}
+                  placeholder="Aggiungi materia personalizzata"
+                  className="w-full px-3 py-2 rounded-xl border"
+                />
+                <button
+                  onClick={addCustomSubject}
+                  className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50"
+                >
+                  Aggiungi
+                </button>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-2 max-h-80 overflow-auto pr-1">
+                {availableSubjects.map((s) => (
+                  <label key={s} className="flex items-center gap-2 p-2 rounded-xl border bg-white">
+                    <input
+                      type="checkbox"
+                      checked={selectedSubjects.includes(s)}
+                      onChange={() => toggleSubject(s)}
+                    />
+                    <span>{s}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="text-sm text-slate-500 mt-2">
+                Tip: puoi aggiungere tutte le materie che vuoi (anche di sezioni particolari).
+              </div>
+            </Section>
+
+            <Section title="Comportamento & Condotta">
+              <div className="grid gap-3">
+                {DEFAULT_QUESTIONS.map((q) => (
+                  <label key={q.id} className="flex items-center justify-between gap-4 p-2 rounded-xl border bg-white">
+                    <span>{q.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={!!questionAnswers[q.id]}
+                      onChange={(e) =>
+                        setQuestionAnswers((prev) => ({ ...prev, [q.id]: e.target.checked }))
+                      }
+                    />
+                  </label>
+                ))}
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="p-3 rounded-xl border bg-white">
+                    <label className="text-sm">Penalità per ogni risposta "Sì"</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={perQuestionPenalty}
+                      onChange={(e) => setPerQuestionPenalty(Number(e.target.value))}
+                      className="w-full"
+                    />
+                    <div className="text-sm">{perQuestionPenalty.toFixed(2)} punti</div>
+                  </div>
+                  <div className="p-3 rounded-xl border bg-white">
+                    <label className="text-sm">Penalità per ogni nota disciplinare</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={notePenalty}
+                      onChange={(e) => setNotePenalty(Number(e.target.value))}
+                      className="w-full"
+                    />
+                    <div className="text-sm">{notePenalty.toFixed(2)} punti</div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border bg-white flex items-center justify-between">
+                  <div>
+                    <div className="text-sm text-slate-500">Anteprima condotta</div>
+                    <div className="text-3xl font-bold">{conduct}</div>
+                  </div>
+                  <div className="text-sm text-slate-500">
+                    {questionYesCount} risposte "Sì" • {disciplinaryNotes} note disciplinari
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => setStep(1)}
+                  className="px-4 py-2 rounded-2xl border bg-emerald-600 text-white hover:bg-emerald-700"
+                >
+                  Entra nella dashboard
+                </button>
+              </div>
+            </Section>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="grid lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 grid gap-6">
+              <Section title="Voti per materia" right={
+                <div className="text-sm text-slate-500">
+                  Numeri da 1 a 10 • Media colori: <span className="text-red-600">rosso</span> < 6, <span className="text-emerald-600">verde</span> ≥ 6
+                </div>
+              }>
+                {selectedSubjects.length === 0 ? (
+                  <div className="text-slate-500">Nessuna materia selezionata. Torna al setup e scegli le materie.</div>
+                ) : (
+                  <div className="overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left border-b">
+                          <th className="p-2">Materia</th>
+                          <th className="p-2">1° quad.</th>
+                          <th className="p-2">2° quad.</th>
+                          <th className="p-2">Media</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedSubjects.map((s) => {
+                          const g = grades[s] || {};
+                          const q1 = isFinite(g.q1) ? g.q1 : null;
+                          const q2 = isFinite(g.q2) ? g.q2 : null;
+                          const avg = average([q1, q2].filter((x) => x != null));
+                          return (
+                            <tr key={s} className="border-b hover:bg-slate-50">
+                              <td className="p-2 font-medium">{s}</td>
+                              <td className="p-2">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={10}
+                                  step={1}
+                                  value={q1 ?? ""}
+                                  onChange={(e) => updateGrade(s, "q1", e.target.value)}
+                                  className="w-24 px-2 py-1 rounded-lg border"
+                                  placeholder="-"
+                                />
+                              </td>
+                              <td className="p-2">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={10}
+                                  step={1}
+                                  value={q2 ?? ""}
+                                  onChange={(e) => updateGrade(s, "q2", e.target.value)}
+                                  className="w-24 px-2 py-1 rounded-lg border"
+                                  placeholder="-"
+                                />
+                              </td>
+                              <td className={`p-2 font-semibold ${colorForGrade(avg)}`}>
+                                {avg == null ? "—" : avg.toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Section>
+
+              <Section title="Note & Annotazioni">
+                <div className="grid md:grid-cols-3 gap-3 items-start">
+                  <textarea
+                    value={newNoteText}
+                    onChange={(e) => setNewNoteText(e.target.value)}
+                    placeholder="Scrivi una nota (es. comportamento, didattica, ecc.)"
+                    className="md:col-span-2 w-full min-h-[80px] px-3 py-2 rounded-xl border"
+                  />
+                  <div className="grid gap-2">
+                    <select
+                      value={newNoteType}
+                      onChange={(e) => setNewNoteType(e.target.value)}
+                      className="px-3 py-2 rounded-xl border bg-white"
+                    >
+                      <option value="disciplinare">Disciplinare</option>
+                      <option value="didattica">Didattica</option>
+                    </select>
+                    <button
+                      onClick={addNote}
+                      className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50"
+                    >
+                      Aggiungi nota
+                    </button>
+                  </div>
+                </div>
+
+                {notes.length === 0 ? (
+                  <div className="text-slate-500 mt-3">Nessuna nota inserita.</div>
+                ) : (
+                  <ul className="mt-4 grid gap-2">
+                    {notes.map((n) => (
+                      <li key={n.id} className="p-3 rounded-xl border bg-white flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-xs text-slate-500">{n.date} • {n.type}</div>
+                          <div>{n.text}</div>
+                        </div>
+                        <button
+                          onClick={() => deleteNote(n.id)}
+                          className="text-sm px-2 py-1 rounded-lg border hover:bg-slate-50"
+                        >
+                          Elimina
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+            </div>
+
+            <div className="grid gap-6">
+              <Section title="Riepilogo">
+                <div className="grid gap-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Media generale</span>
+                    <span className={`font-semibold ${colorForGrade(overallAverage)}`}>
+                      {overallAverage == null ? "—" : overallAverage.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Condotta</span>
+                    <span className="font-semibold">{conduct}</span>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Penalità: {questionYesCount}×{perQuestionPenalty.toFixed(2)} (domande)
+                    {"  •  "}
+                    {disciplinaryNotes}×{notePenalty.toFixed(2)} (note disciplinari)
+                  </div>
+                </div>
+              </Section>
+
+              <Section title="Gestione">
+                <div className="grid gap-2">
+                  <button
+                    onClick={() => setStep(0)}
+                    className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50"
+                  >
+                    Torna al setup (aggiungi/togli materie)
+                  </button>
+                  <button
+                    onClick={resetAll}
+                    className="px-3 py-2 rounded-xl border bg-white hover:bg-red-50"
+                  >
+                    Azzera tutto
+                  </button>
+                </div>
+                <div className="text-xs text-slate-500 mt-3">
+                  I dati sono salvati solo sul tuo dispositivo (localStorage).
+                </div>
+              </Section>
+            </div>
+          </div>
+        )}
+
+        <footer className="text-center text-xs text-slate-500 mt-6">
+          © {new Date().getFullYear()} – Registro Voti Medie • Made with React & Tailwind
+        </footer>
+      </div>
+    </div>
+  );
+}
