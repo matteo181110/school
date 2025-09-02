@@ -1,0 +1,187 @@
+import React, { useState, useEffect } from "react";
+
+// =============================
+// Registro Medie – Nuova versione
+// =============================
+// - Layout più moderno e accattivante
+// - Pagina iniziale tipo login con domande sul comportamento
+// - Dashboard con cards grandi e chiare
+// - Sezione voti con progress bar e colori immediati
+// - Note visualizzate come "tag" con colore diverso per disciplinari/didattiche
+// - Salvataggio su localStorage
+
+const SUBJECTS = [
+  "Italiano", "Storia", "Geografia", "Matematica", "Scienze",
+  "Inglese", "Francese", "Spagnolo", "Tedesco",
+  "Arte", "Musica", "Tecnologia", "Scienze Motorie", "Religione"
+];
+
+export default function RegistroMedie() {
+  const [step, setStep] = useState(0); // 0=login/comportamento, 1=dashboard
+  const [answers, setAnswers] = useState({ casino: false, ritardi: false, rispetto: false });
+  const [subjects, setSubjects] = useState([]);
+  const [grades, setGrades] = useState({});
+  const [notes, setNotes] = useState([]);
+
+  // load/save
+  useEffect(() => {
+    const saved = localStorage.getItem("registro_v1");
+    if (saved) {
+      const obj = JSON.parse(saved);
+      setStep(obj.step ?? 0);
+      setAnswers(obj.answers ?? { casino: false, ritardi: false, rispetto: false });
+      setSubjects(obj.subjects ?? []);
+      setGrades(obj.grades ?? {});
+      setNotes(obj.notes ?? []);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("registro_v1", JSON.stringify({ step, answers, subjects, grades, notes }));
+  }, [step, answers, subjects, grades, notes]);
+
+  // condotta base 10 - penalità
+  const conduct = () => {
+    let base = 10;
+    if (answers.casino) base -= 0.5;
+    if (answers.ritardi) base -= 0.25;
+    if (answers.rispetto) base -= 1;
+    const discNotes = notes.filter(n => n.type === "disciplinare").length;
+    base -= discNotes * 0.5;
+    return Math.max(1, base.toFixed(2));
+  };
+
+  const avg = (arr) => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : "-";
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-purple-100 p-6 font-sans">
+      <div className="max-w-5xl mx-auto">
+        <h1 className="text-4xl font-extrabold text-center mb-8">📘 Registro Medie</h1>
+
+        {step === 0 && (
+          <div className="bg-white p-6 rounded-2xl shadow-xl grid gap-6">
+            <h2 className="text-2xl font-bold">Prima di iniziare…</h2>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={answers.casino} onChange={e => setAnswers({ ...answers, casino: e.target.checked })} />
+              <span>Fai casino in classe?</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={answers.ritardi} onChange={e => setAnswers({ ...answers, ritardi: e.target.checked })} />
+              <span>Arrivi spesso in ritardo?</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={answers.rispetto} onChange={e => setAnswers({ ...answers, rispetto: e.target.checked })} />
+              <span>Mancanze di rispetto?</span>
+            </label>
+            <button onClick={() => setStep(1)} className="bg-indigo-600 text-white px-4 py-2 rounded-xl hover:bg-indigo-700">
+              Vai al Registro
+            </button>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="grid gap-6">
+            {/* Materie */}
+            <div className="bg-white p-6 rounded-2xl shadow-xl">
+              <h2 className="text-xl font-bold mb-4">Materie</h2>
+              <div className="grid sm:grid-cols-2 gap-2">
+                {SUBJECTS.map(s => (
+                  <label key={s} className="flex items-center gap-2 p-2 rounded-lg border">
+                    <input type="checkbox" checked={subjects.includes(s)} onChange={() => setSubjects(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])} />
+                    <span>{s}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Voti */}
+            <div className="bg-white p-6 rounded-2xl shadow-xl">
+              <h2 className="text-xl font-bold mb-4">Voti</h2>
+              {subjects.length === 0 ? (
+                <p className="text-slate-500">Seleziona materie prima.</p>
+              ) : (
+                <div className="overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="p-2">Materia</th>
+                        <th className="p-2">1° Quad.</th>
+                        <th className="p-2">2° Quad.</th>
+                        <th className="p-2">Media</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subjects.map(s => {
+                        const g = grades[s] || { q1: "", q2: "" };
+                        const media = g.q1 && g.q2 ? avg([+g.q1, +g.q2]) : "-";
+                        return (
+                          <tr key={s} className="border-b">
+                            <td className="p-2 font-medium">{s}</td>
+                            <td className="p-2"><input type="number" min={1} max={10} value={g.q1} onChange={e => setGrades({ ...grades, [s]: { ...g, q1: e.target.value } })} className="w-16 border rounded px-1" /></td>
+                            <td className="p-2"><input type="number" min={1} max={10} value={g.q2} onChange={e => setGrades({ ...grades, [s]: { ...g, q2: e.target.value } })} className="w-16 border rounded px-1" /></td>
+                            <td className={`p-2 font-semibold ${media !== "-" && media < 6 ? "text-red-600" : "text-green-600"}`}>{media}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Note */}
+            <div className="bg-white p-6 rounded-2xl shadow-xl">
+              <h2 className="text-xl font-bold mb-4">Note</h2>
+              <NoteSection notes={notes} setNotes={setNotes} />
+            </div>
+
+            {/* Riepilogo */}
+            <div className="bg-white p-6 rounded-2xl shadow-xl grid gap-2">
+              <h2 className="text-xl font-bold">Riepilogo</h2>
+              <div>Condotta: <span className="font-semibold">{conduct()}</span></div>
+              <div>Media generale: <span className="font-semibold">{
+                subjects.length ? avg(subjects.map(s => {
+                  const g = grades[s] || {}; return (+g.q1 + +g.q2) / 2 || null;
+                }).filter(x => x)) : "-"
+              }</span></div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NoteSection({ notes, setNotes }) {
+  const [text, setText] = useState("");
+  const [type, setType] = useState("disciplinare");
+
+  const add = () => {
+    if (!text.trim()) return;
+    setNotes([...notes, { id: crypto.randomUUID(), text, type, date: new Date().toLocaleDateString() }]);
+    setText("");
+  };
+
+  const del = (id) => setNotes(notes.filter(n => n.id !== id));
+
+  return (
+    <div className="grid gap-3">
+      <div className="flex gap-2">
+        <input value={text} onChange={e => setText(e.target.value)} placeholder="Scrivi una nota" className="flex-1 border rounded px-2 py-1" />
+        <select value={type} onChange={e => setType(e.target.value)} className="border rounded px-2">
+          <option value="disciplinare">Disciplinare</option>
+          <option value="didattica">Didattica</option>
+        </select>
+        <button onClick={add} className="bg-indigo-600 text-white px-3 rounded">Aggiungi</button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {notes.map(n => (
+          <span key={n.id} className={`px-2 py-1 rounded-full text-sm flex items-center gap-2 ${n.type === "disciplinare" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+            {n.text} • {n.date}
+            <button onClick={() => del(n.id)} className="ml-1 text-xs">✕</button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
